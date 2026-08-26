@@ -56,13 +56,38 @@ export default function AdminWebScreen() {
   useEffect(() => { if (session?.user?.id) void loadAdminData(session.user.id); else { setIsAdmin(false); setCourses([]); setLessons([]); setCategories([]); } }, [session?.user?.id]);
 
   async function loadAdminData(userId: string) {
-    setBusy(true); setAuthError("");
-    const profile = await supabase.from("admin_profiles").select("user_id, role").eq("user_id", userId).eq("role", "admin").maybeSingle();
-    if (profile.error || !profile.data) { setIsAdmin(false); setAuthError("هذا الحساب مسجل الدخول لكنه لا يملك صلاحية Admin."); setBusy(false); return; }
-    setIsAdmin(true);
-    const [courseResult, lessonResult, categoryResult] = await Promise.all([supabase.from("courses").select("*").order("updated_at", { ascending: false }), supabase.from("lessons").select("*").order("sort_order", { ascending: true }), supabase.from("course_categories").select("*").order("name")]);
-    if (courseResult.error || lessonResult.error || categoryResult.error) setAuthError("تعذر تحميل بيانات الإدارة. تحقق من سياسات RLS.");
-    setCourses((courseResult.data ?? []) as SupabaseCourse[]); setLessons((lessonResult.data ?? []) as SupabaseLesson[]); setCategories((categoryResult.data ?? []) as SupabaseCategory[]); setBusy(false);
+    setBusy(true);
+    setAuthError("");
+    try {
+      const profile = await supabase
+        .from("admin_profiles")
+        .select("user_id, role")
+        .eq("user_id", userId)
+        .eq("role", "admin")
+        .maybeSingle();
+      if (profile.error) throw new Error(`تعذر التحقق من صلاحية الحساب: ${profile.error.message}`);
+      if (!profile.data) {
+        setIsAdmin(false);
+        setAuthError("تم تسجيل الدخول، لكن هذا الحساب غير موجود في قائمة Admin.");
+        return;
+      }
+      setIsAdmin(true);
+      const [courseResult, lessonResult, categoryResult] = await Promise.all([
+        supabase.from("courses").select("*").order("updated_at", { ascending: false }),
+        supabase.from("lessons").select("*").order("sort_order", { ascending: true }),
+        supabase.from("course_categories").select("*").order("name"),
+      ]);
+      const dataError = courseResult.error || lessonResult.error || categoryResult.error;
+      if (dataError) throw new Error(`تعذر تحميل بيانات الإدارة: ${dataError.message}`);
+      setCourses((courseResult.data ?? []) as SupabaseCourse[]);
+      setLessons((lessonResult.data ?? []) as SupabaseLesson[]);
+      setCategories((categoryResult.data ?? []) as SupabaseCategory[]);
+    } catch (error: unknown) {
+      setIsAdmin(false);
+      setAuthError(error instanceof Error ? error.message : "تعذر إكمال التحقق من حساب Admin.");
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function signIn() {

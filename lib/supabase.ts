@@ -4,7 +4,7 @@ const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL ?? process.env.VITE_SUP
 const supabasePublishableKey = process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? process.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 
 export const supabaseConfigError = !supabaseUrl || !supabasePublishableKey
-  ? "لم يتم ضبط VITE_SUPABASE_URL و VITE_SUPABASE_PUBLISHABLE_KEY في إعدادات Netlify."
+  ? "لم يتم ضبط إعدادات Supabase العامة للموقع: EXPO_PUBLIC_SUPABASE_URL و EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY."
   : null;
 
 if (supabaseConfigError) console.warn(supabaseConfigError);
