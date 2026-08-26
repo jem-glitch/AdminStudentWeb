@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from "react-native";
-import { supabase, extractYoutubeVideoId, isValidYoutubeVideoId, type SupabaseCategory, type SupabaseCourse, type SupabaseLesson } from "@/lib/supabase";
+import { supabase, supabaseConfigError, extractYoutubeVideoId, isValidYoutubeVideoId, type SupabaseCategory, type SupabaseCourse, type SupabaseLesson } from "@/lib/supabase";
 
 export default function AdminWebScreen() {
   const [session, setSession] = useState<any>(null);
@@ -31,6 +31,11 @@ export default function AdminWebScreen() {
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
+    if (supabaseConfigError) {
+      setAuthError(supabaseConfigError);
+      setAuthReady(true);
+      return;
+    }
     let mounted = true;
     supabase.auth.getSession().then(({ data }) => { if (mounted) { setSession(data.session); setAuthReady(true); } });
     const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => { setSession(nextSession); setAuthReady(true); });
@@ -50,6 +55,7 @@ export default function AdminWebScreen() {
   }
 
   async function signIn() {
+    if (supabaseConfigError) { setAuthError(supabaseConfigError); return; }
     setBusy(true);
     setAuthError("");
     const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });

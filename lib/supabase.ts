@@ -3,13 +3,15 @@ import { createClient } from "@supabase/supabase-js";
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL ?? process.env.VITE_SUPABASE_URL;
 const supabasePublishableKey = process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? process.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 
-if (!supabaseUrl || !supabasePublishableKey) {
-  console.warn("Supabase configuration is missing. Add VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY.");
-}
+export const supabaseConfigError = !supabaseUrl || !supabasePublishableKey
+  ? "لم يتم ضبط VITE_SUPABASE_URL و VITE_SUPABASE_PUBLISHABLE_KEY في إعدادات Netlify."
+  : null;
+
+if (supabaseConfigError) console.warn(supabaseConfigError);
 
 export const supabase = createClient(
-  supabaseUrl ?? "https://invalid.supabase.co",
-  supabasePublishableKey ?? "invalid-publishable-key",
+  supabaseUrl ?? "https://placeholder.supabase.co",
+  supabasePublishableKey ?? "placeholder-publishable-key",
   {
     auth: {
       persistSession: true,
