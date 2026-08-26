@@ -37,7 +37,18 @@ export default function AdminWebScreen() {
       return;
     }
     let mounted = true;
-    supabase.auth.getSession().then(({ data }) => { if (mounted) { setSession(data.session); setAuthReady(true); } });
+    supabase.auth.getSession()
+      .then(({ data, error }) => {
+        if (!mounted) return;
+        if (error) setAuthError(`تعذر الاتصال بخدمة تسجيل الدخول: ${error.message}`);
+        setSession(data.session);
+        setAuthReady(true);
+      })
+      .catch((error: unknown) => {
+        if (!mounted) return;
+        setAuthError(`تعذر الاتصال بخدمة تسجيل الدخول: ${error instanceof Error ? error.message : "فشل الجلب"}`);
+        setAuthReady(true);
+      });
     const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => { setSession(nextSession); setAuthReady(true); });
     return () => { mounted = false; listener.subscription.unsubscribe(); };
   }, []);
@@ -58,14 +69,19 @@ export default function AdminWebScreen() {
     if (supabaseConfigError) { setAuthError(supabaseConfigError); return; }
     setBusy(true);
     setAuthError("");
-    const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
-    if (error) {
-      const message = error.message.toLowerCase();
-      if (message.includes("email not confirmed")) setAuthError("هذا البريد غير مؤكد. افتح رسالة Supabase واضغط رابط التأكيد، أو عطّل Confirm email مؤقتاً من إعدادات Auth.");
-      else if (message.includes("invalid login credentials") || message.includes("user not found")) setAuthError("الحساب غير موجود في مشروع Supabase المرتبط بالموقع، أو أن البريد/كلمة المرور غير صحيحين.");
-      else setAuthError(`تعذر تسجيل الدخول: ${error.message}`);
+    try {
+      const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
+      if (error) {
+        const message = error.message.toLowerCase();
+        if (message.includes("email not confirmed")) setAuthError("هذا البريد غير مؤكد. افتح رسالة Supabase واضغط رابط التأكيد، أو عطّل Confirm email مؤقتاً من إعدادات Auth.");
+        else if (message.includes("invalid login credentials") || message.includes("user not found")) setAuthError("الحساب غير موجود في مشروع Supabase المرتبط بالموقع، أو أن البريد/كلمة المرور غير صحيحين.");
+        else setAuthError(`تعذر تسجيل الدخول: ${error.message}`);
+      }
+    } catch (error: unknown) {
+      setAuthError(`تعذر الاتصال بخدمة تسجيل الدخول: ${error instanceof Error ? error.message : "فشل الجلب"}`);
+    } finally {
+      setBusy(false);
     }
-    setBusy(false);
   }
   async function signOut() { await supabase.auth.signOut(); setSession(null); }
 
