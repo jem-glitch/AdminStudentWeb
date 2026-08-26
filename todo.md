@@ -97,3 +97,10 @@
 - [x] إضافة Foreign Keys وUnique Constraints وIndexes وRLS المناسبة
 - [x] التحقق من بقاء C++ والدرس والمدرس وcategory_id كما هي
 - [x] التحقق من توافق Admin Web وStudent App بعد Migration
+
+- [x] إضافة إدارة Stages من Supabase داخل AdminStudentWeb
+- [x] إضافة إدارة Subjects وربطها بالـStages عبر stage_subjects
+- [x] إضافة إدارة Teachers وTeacher Assignments
+- [x] تحديث نموذج الكورس لاختيار Stage ثم Subject ثم Teacher Assignment
+- [x] الحفاظ على الكورس C++ والدرس الحالي والسماح بربطهما يدوياً لاحقاً
+- [x] اختبار الصلاحيات والقيود والقوائم المتسلسلة وبناء AdminStudentWeb

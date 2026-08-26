@@ -37,6 +37,7 @@ export type SupabaseCourse = {
   slug: string;
   description: string | null;
   instructor: string | null;
+  teacher_assignment_id: string | null;
   image_url: string | null;
   cover_url: string | null;
   is_featured: boolean;
@@ -77,3 +78,9 @@ export function extractYoutubeVideoId(value: string) {
 export function isValidYoutubeVideoId(value: string | null): value is string {
   return Boolean(value && /^[A-Za-z0-9_-]{6,20}$/.test(value));
 }
+
+export type SupabaseStage = { id: string; name: string; slug: string; is_active: boolean; sort_order: number; created_at: string; updated_at: string };
+export type SupabaseSubject = { id: string; name: string; slug: string; is_active: boolean; sort_order: number; created_at: string; updated_at: string };
+export type SupabaseStageSubject = { id: string; stage_id: string; subject_id: string; created_at: string };
+export type SupabaseTeacher = { id: string; display_name: string; slug: string; is_active: boolean; created_at: string; updated_at: string };
+export type SupabaseTeacherAssignment = { id: string; stage_subject_id: string; teacher_id: string; created_at: string; updated_at: string };
