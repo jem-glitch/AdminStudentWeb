@@ -53,7 +53,12 @@ export default function AdminWebScreen() {
     setBusy(true);
     setAuthError("");
     const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
-    if (error) setAuthError("البريد الإلكتروني أو كلمة المرور غير صحيحة.");
+    if (error) {
+      const message = error.message.toLowerCase();
+      if (message.includes("email not confirmed")) setAuthError("هذا البريد غير مؤكد. افتح رسالة Supabase واضغط رابط التأكيد، أو عطّل Confirm email مؤقتاً من إعدادات Auth.");
+      else if (message.includes("invalid login credentials") || message.includes("user not found")) setAuthError("الحساب غير موجود في مشروع Supabase المرتبط بالموقع، أو أن البريد/كلمة المرور غير صحيحين.");
+      else setAuthError(`تعذر تسجيل الدخول: ${error.message}`);
+    }
     setBusy(false);
   }
   async function signOut() { await supabase.auth.signOut(); setSession(null); }
