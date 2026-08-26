@@ -82,3 +82,8 @@
 - [x] إضافة واجهة Chat Assistant محلية داخل AdminStudentWeb مرتبطة بـ admin-ai
 - [x] دعم رسائل Admin وAI وEnter وLoading وError وبدء محادثة جديدة
 - [x] اختبار Responsive وعدم إضافة أي Database mutation أو AI tools
+
+- [x] فحص مخطط Supabase الفعلي والعلاقات دون افتراض أسماء جديدة
+- [x] تحديث admin-ai لقراءة البيانات الضرورية فقط بحسب سؤال Admin
+- [x] منع أي INSERT أو UPDATE أو DELETE أو Schema change في هذه المرحلة
+- [x] اختبار الإجابات الواقعية وحالات عدم العثور وحماية غير Admin
