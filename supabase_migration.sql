@@ -78,3 +78,92 @@ grant execute on function public.is_admin() to anon, authenticated;
 create policy "admins manage categories" on public.course_categories for all using (public.is_admin()) with check (public.is_admin());
 create policy "admins manage courses" on public.courses for all using (public.is_admin()) with check (public.is_admin());
 create policy "admins manage lessons" on public.lessons for all using (public.is_admin()) with check (public.is_admin());
+
+
+-- Academic content hierarchy migration (applied separately; no backfill)
+create extension if not exists pgcrypto;
+
+create table if not exists public.stages (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  slug text not null unique,
+  is_active boolean not null default true,
+  sort_order integer not null default 0,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create table if not exists public.subjects (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  slug text not null unique,
+  is_active boolean not null default true,
+  sort_order integer not null default 0,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create table if not exists public.stage_subjects (
+  id uuid primary key default gen_random_uuid(),
+  stage_id uuid not null references public.stages(id) on delete cascade,
+  subject_id uuid not null references public.subjects(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  constraint stage_subjects_stage_subject_unique unique (stage_id, subject_id)
+);
+create table if not exists public.teachers (
+  id uuid primary key default gen_random_uuid(),
+  display_name text not null,
+  slug text not null unique,
+  is_active boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create table if not exists public.teacher_assignments (
+  id uuid primary key default gen_random_uuid(),
+  stage_subject_id uuid not null references public.stage_subjects(id) on delete cascade,
+  teacher_id uuid not null references public.teachers(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint teacher_assignments_stage_subject_teacher_unique unique (stage_subject_id, teacher_id)
+);
+alter table public.courses add column if not exists teacher_assignment_id uuid null;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'courses_teacher_assignment_id_fkey') THEN
+    ALTER TABLE public.courses ADD CONSTRAINT courses_teacher_assignment_id_fkey FOREIGN KEY (teacher_assignment_id) REFERENCES public.teacher_assignments(id) ON DELETE SET NULL;
+  END IF;
+END $$;
+create index if not exists stage_subjects_stage_idx on public.stage_subjects(stage_id);
+create index if not exists stage_subjects_subject_idx on public.stage_subjects(subject_id);
+create index if not exists teacher_assignments_stage_subject_idx on public.teacher_assignments(stage_subject_id);
+create index if not exists teacher_assignments_teacher_idx on public.teacher_assignments(teacher_id);
+create index if not exists courses_teacher_assignment_idx on public.courses(teacher_assignment_id);
+create index if not exists courses_category_idx on public.courses(category_id);
+create index if not exists courses_published_idx on public.courses(is_published);
+create index if not exists lessons_course_idx on public.lessons(course_id);
+create index if not exists lessons_published_idx on public.lessons(is_published);
+create index if not exists lessons_sort_order_idx on public.lessons(sort_order);
+alter table public.stages enable row level security;
+alter table public.subjects enable row level security;
+alter table public.stage_subjects enable row level security;
+alter table public.teachers enable row level security;
+alter table public.teacher_assignments enable row level security;
+DROP POLICY IF EXISTS "public can read active stages" ON public.stages;
+CREATE POLICY "public can read active stages" ON public.stages FOR SELECT TO anon, authenticated USING (is_active = true OR public.is_admin());
+DROP POLICY IF EXISTS "admins manage stages" ON public.stages;
+CREATE POLICY "admins manage stages" ON public.stages FOR ALL TO authenticated USING (public.is_admin()) WITH CHECK (public.is_admin());
+DROP POLICY IF EXISTS "public can read active subjects" ON public.subjects;
+CREATE POLICY "public can read active subjects" ON public.subjects FOR SELECT TO anon, authenticated USING (is_active = true OR public.is_admin());
+DROP POLICY IF EXISTS "admins manage subjects" ON public.subjects;
+CREATE POLICY "admins manage subjects" ON public.subjects FOR ALL TO authenticated USING (public.is_admin()) WITH CHECK (public.is_admin());
+DROP POLICY IF EXISTS "public can read active stage subjects" ON public.stage_subjects;
+CREATE POLICY "public can read active stage subjects" ON public.stage_subjects FOR SELECT TO anon, authenticated USING (((EXISTS (SELECT 1 FROM public.stages s WHERE s.id = stage_id AND s.is_active = true)) AND (EXISTS (SELECT 1 FROM public.subjects su WHERE su.id = subject_id AND su.is_active = true))) OR public.is_admin());
+DROP POLICY IF EXISTS "admins manage stage subjects" ON public.stage_subjects;
+CREATE POLICY "admins manage stage subjects" ON public.stage_subjects FOR ALL TO authenticated USING (public.is_admin()) WITH CHECK (public.is_admin());
+DROP POLICY IF EXISTS "public can read active teachers" ON public.teachers;
+CREATE POLICY "public can read active teachers" ON public.teachers FOR SELECT TO anon, authenticated USING (is_active = true OR public.is_admin());
+DROP POLICY IF EXISTS "admins manage teachers" ON public.teachers;
+CREATE POLICY "admins manage teachers" ON public.teachers FOR ALL TO authenticated USING (public.is_admin()) WITH CHECK (public.is_admin());
+DROP POLICY IF EXISTS "public can read active teacher assignments" ON public.teacher_assignments;
+CREATE POLICY "public can read active teacher assignments" ON public.teacher_assignments FOR SELECT TO anon, authenticated USING (((EXISTS (SELECT 1 FROM public.stage_subjects ss JOIN public.stages s ON s.id = ss.stage_id AND s.is_active = true JOIN public.subjects su ON su.id = ss.subject_id AND su.is_active = true WHERE ss.id = stage_subject_id)) AND (EXISTS (SELECT 1 FROM public.teachers t WHERE t.id = teacher_id AND t.is_active = true))) OR public.is_admin());
+DROP POLICY IF EXISTS "admins manage teacher assignments" ON public.teacher_assignments;
+CREATE POLICY "admins manage teacher assignments" ON public.teacher_assignments FOR ALL TO authenticated USING (public.is_admin()) WITH CHECK (public.is_admin());
+grant select on public.stages, public.subjects, public.stage_subjects, public.teachers, public.teacher_assignments to anon, authenticated;
+grant insert, update, delete on public.stages, public.subjects, public.stage_subjects, public.teachers, public.teacher_assignments to authenticated;

@@ -87,3 +87,13 @@
 - [x] تحديث admin-ai لقراءة البيانات الضرورية فقط بحسب سؤال Admin
 - [x] منع أي INSERT أو UPDATE أو DELETE أو Schema change في هذه المرحلة
 - [x] اختبار الإجابات الواقعية وحالات عدم العثور وحماية غير Admin
+
+- [x] إعداد تقرير هندسي عن Schema الحالية والبنية المستقبلية المقترحة
+- [x] فحص بيانات الكورسات والمدرسين والتصنيفات والدروس قراءة فقط
+- [x] اقتراح Migration Plan مرحلية دون تنفيذها أو تعديل Admin Web
+
+- [x] تنفيذ Migration لإضافة stages وsubjects وstage_subjects وteachers وteacher_assignments
+- [x] إضافة teacher_assignment_id nullable إلى courses دون نقل أو تعديل البيانات الحالية
+- [x] إضافة Foreign Keys وUnique Constraints وIndexes وRLS المناسبة
+- [x] التحقق من بقاء C++ والدرس والمدرس وcategory_id كما هي
+- [x] التحقق من توافق Admin Web وStudent App بعد Migration
