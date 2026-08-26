@@ -72,3 +72,9 @@
 - [ ] استبدال تسجيل Google OAuth بواجهة بريد إلكتروني وكلمة مرور فقط
 - [ ] تحديث توثيق Netlify وSupabase ليتوافق مع تسجيل الدخول التقليدي
 - [ ] اختبار البناء ورفع تحديث تسجيل الدخول إلى AdminStudentWeb
+
+- [x] إضافة Supabase Edge Function باسم admin-ai للاتصال الآمن بـ OpenRouter
+- [x] التحقق من جلسة Supabase Auth ومن صلاحية admin_profiles قبل استدعاء OpenRouter
+- [x] إضافة استدعاء Admin Web تجريبي دون أي عمليات كتابة أو حذف أو تعديل
+- [x] إضافة معالجة أخطاء timeout وrate limit و401/403 والاستجابة الفارغة
+- [x] اختبار عدم كشف OPENROUTER_API_KEY في الواجهة أو السجلات
