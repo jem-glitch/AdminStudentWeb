@@ -4,6 +4,7 @@
 
 [build.environment]
   NODE_VERSION = "22"
+  EXPO_NO_METRO_WORKSPACE_ROOT = "1"
 
 [[redirects]]
   from = "/*"
