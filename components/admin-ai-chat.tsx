@@ -11,6 +11,21 @@ const welcomeMessage: ChatMessage = {
   text: "مرحبًا، أنا مساعد الإدارة. يمكنني في هذه المرحلة الإجابة عن الأسئلة وتحليل الطلبات، لكنني لا أنفذ أي تغيير على بيانات المنصة.",
 };
 
+async function diagnosticFromInvokeError(error: unknown) {
+  const context = (error as { context?: Response } | null)?.context;
+  const status = context?.status;
+  let code = "function_invoke_failed";
+  if (context) {
+    try {
+      const payload = await context.clone().json() as { error?: { code?: unknown } };
+      if (typeof payload.error?.code === "string" && payload.error.code.length <= 80) code = payload.error.code;
+    } catch {
+      // Keep the generic diagnostic code; never log the response body.
+    }
+  }
+  return { code, ...(typeof status === "number" ? { status } : {}) };
+}
+
 export function AdminAiChat() {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState("");
@@ -27,9 +42,16 @@ export function AdminAiChat() {
     setMessages((current) => [...current, { id: `${Date.now()}-admin`, role: "admin", text }]);
     try {
       const { data, error: invokeError } = await supabase.functions.invoke("admin-ai", { body: { message: text } });
-      if (invokeError) throw invokeError;
+      if (invokeError) {
+        const diagnostic = await diagnosticFromInvokeError(invokeError);
+        console.warn("[admin-ai] request_failed", diagnostic);
+        throw new Error(diagnostic.code);
+      }
       const reply = typeof data?.data?.text === "string" ? data.data.text.trim() : "";
-      if (!reply) throw new Error("empty_response");
+      if (!reply) {
+        console.warn("[admin-ai] request_failed", { code: "empty_response" });
+        throw new Error("empty_response");
+      }
       setMessages((current) => [...current, { id: `${Date.now()}-ai`, role: "ai", text: reply }]);
     } catch {
       setError("تعذر الاتصال بالمساعد، حاول مرة أخرى.");

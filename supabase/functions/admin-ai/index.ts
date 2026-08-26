@@ -18,6 +18,11 @@ function json(body: Record<string, unknown>, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: corsHeaders });
 }
 
+function logEvent(event: string, requestId: string, details: Record<string, unknown> = {}) {
+  // Diagnostic fields are deliberately allow-listed: never include message, headers, tokens, secrets, or provider bodies.
+  console.log(JSON.stringify({ event, request_id: requestId, ...details }));
+}
+
 function upstreamMessage(status: number) {
   if (status === 401) return "تعذر التحقق من إعدادات مزود الذكاء الاصطناعي.";
   if (status === 402) return "رصيد مزود الذكاء الاصطناعي غير كافٍ.";
@@ -98,11 +103,18 @@ function extractText(payload: unknown): string {
 }
 
 Deno.serve(async (req: Request) => {
+  const requestId = crypto.randomUUID();
+  logEvent("REQUEST_RECEIVED", requestId, { method: req.method });
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   if (req.method !== "POST") return json({ error: { code: "method_not_allowed", message: "يسمح هذا المسار بطلبات POST فقط." } }, 405);
 
   const authorization = req.headers.get("Authorization");
-  if (!authorization?.toLowerCase().startsWith("bearer ")) return json({ error: { code: "unauthorized", message: "جلسة الإدارة غير صالحة أو انتهت." } }, 401);
+  const hasBearer = Boolean(authorization?.toLowerCase().startsWith("bearer "));
+  logEvent("AUTH_HEADER_PRESENT", requestId, { present: hasBearer });
+  if (!hasBearer) {
+    logEvent("AUTH_FAILED", requestId, { status: 401, reason: "missing_bearer" });
+    return json({ error: { code: "unauthorized", message: "جلسة الإدارة غير صالحة أو انتهت." } }, 401);
+  }
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
   const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY");
@@ -116,11 +128,22 @@ Deno.serve(async (req: Request) => {
     global: { headers: { Authorization: authorization } },
   });
   const { data: userData, error: userError } = await client.auth.getUser(token);
-  if (userError || !userData.user) return json({ error: { code: "unauthorized", message: "جلسة الإدارة غير صالحة أو انتهت." } }, 401);
+  if (userError || !userData.user) {
+    logEvent("AUTH_FAILED", requestId, { status: 401, reason: "invalid_session" });
+    return json({ error: { code: "unauthorized", message: "جلسة الإدارة غير صالحة أو انتهت." } }, 401);
+  }
+  logEvent("USER_AUTHENTICATED", requestId);
 
   const { data: profile, error: profileError } = await client.from("admin_profiles").select("user_id").eq("user_id", userData.user.id).eq("role", "admin").maybeSingle();
-  if (profileError) return json({ error: { code: "admin_check_failed", message: "تعذر التحقق من صلاحية Admin." } }, 500);
-  if (!profile) return json({ error: { code: "forbidden", message: "هذا الحساب ليس ضمن قائمة Admin المسموح لها باستخدام المساعد." } }, 403);
+  if (profileError) {
+    logEvent("ADMIN_CHECK_FAILED", requestId, { status: 500, reason: "profile_query_failed" });
+    return json({ error: { code: "admin_check_failed", message: "تعذر التحقق من صلاحية Admin." } }, 500);
+  }
+  if (!profile) {
+    logEvent("ADMIN_CHECK_FAILED", requestId, { status: 403, reason: "not_admin" });
+    return json({ error: { code: "forbidden", message: "هذا الحساب ليس ضمن قائمة Admin المسموح لها باستخدام المساعد." } }, 403);
+  }
+  logEvent("ADMIN_CHECK_PASSED", requestId);
 
   let body: { message?: unknown };
   try { body = await req.json(); } catch { return json({ error: { code: "invalid_json", message: "صيغة الطلب غير صالحة." } }, 400); }
@@ -133,6 +156,7 @@ Deno.serve(async (req: Request) => {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 30000);
     try {
+      logEvent("OPENROUTER_REQUEST_STARTED", requestId);
       const upstream = await fetch("https://openrouter.ai/api/v1/chat/completions", {
         method: "POST",
         signal: controller.signal,
@@ -153,17 +177,51 @@ Deno.serve(async (req: Request) => {
           max_tokens: 800,
         }),
       });
-      if (!upstream.ok) return json({ error: { code: `openrouter_${upstream.status}`, message: upstreamMessage(upstream.status) } }, upstream.status === 401 ? 502 : upstream.status === 429 ? 429 : upstream.status >= 500 ? 502 : 502);
-      const payload = await upstream.json();
+      logEvent("OPENROUTER_RESPONSE_RECEIVED", requestId, { status: upstream.status });
+      if (!upstream.ok) {
+        let providerReason = "unknown";
+        try {
+          const errorPayload = await upstream.clone().json() as { error?: { code?: unknown; type?: unknown; message?: unknown } };
+          const raw = `${String(errorPayload.error?.code ?? "")} ${String(errorPayload.error?.type ?? "")} ${String(errorPayload.error?.message ?? "")}`.toLowerCase();
+          if (raw.includes("model")) providerReason = "model_configuration";
+          else if (raw.includes("token") || raw.includes("message") || raw.includes("request")) providerReason = "request_shape";
+          else if (raw.includes("auth") || raw.includes("key") || raw.includes("credential")) providerReason = "provider_auth";
+          else if (raw.includes("credit") || raw.includes("balance") || raw.includes("fund")) providerReason = "provider_credits";
+          else if (raw.includes("rate") || raw.includes("limit")) providerReason = "provider_rate_limit";
+        } catch {
+          providerReason = "unparseable_provider_error";
+        }
+        logEvent("OPENROUTER_HTTP_ERROR", requestId, { status: upstream.status, reason: providerReason });
+        return json({ error: { code: `openrouter_${upstream.status}`, message: upstreamMessage(upstream.status) } }, upstream.status === 401 ? 502 : upstream.status === 429 ? 429 : upstream.status >= 500 ? 502 : 502);
+      }
+      let payload: unknown;
+      try { payload = await upstream.json(); } catch {
+        logEvent("OPENROUTER_REQUEST_FAILED", requestId, { reason: "invalid_json", status: upstream.status });
+        return json({ error: { code: "openrouter_invalid_response", message: "تعذر قراءة استجابة المساعد." } }, 502);
+      }
       const text = extractText(payload);
-      if (!text) return json({ error: { code: "empty_response", message: "عاد المساعد دون إجابة نصية." } }, 502);
+      if (!text) {
+        logEvent("EMPTY_RESPONSE", requestId, { status: upstream.status });
+        return json({ error: { code: "empty_response", message: "عاد المساعد دون إجابة نصية." } }, 502);
+      }
+      logEvent("RESPONSE_RETURNED", requestId, { status: 200 });
       return json({ data: { text, model } });
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        logEvent("OPENROUTER_TIMEOUT", requestId, { status: 408 });
+        return json({ error: { code: "timeout", message: "انتهت مهلة الاتصال بالمساعد. حاول مرة أخرى." } }, 408);
+      }
+      logEvent("OPENROUTER_REQUEST_FAILED", requestId, { reason: "fetch_failed" });
+      return json({ error: { code: "openrouter_unavailable", message: "خدمة المساعد غير متاحة حالياً. حاول مرة أخرى لاحقاً." } }, 503);
     } finally {
       clearTimeout(timeout);
     }
   } catch (error) {
-    if (error instanceof DOMException && error.name === "AbortError") return json({ error: { code: "timeout", message: "انتهت مهلة الاتصال بالمساعد. حاول مرة أخرى." } }, 408);
-    if (error instanceof Error && ["category_read_failed", "course_read_failed", "lesson_read_failed"].includes(error.message)) return json({ error: { code: "content_read_failed", message: "تعذر قراءة بيانات المحتوى المطلوبة." } }, 502);
+    if (error instanceof Error && ["category_read_failed", "course_read_failed", "lesson_read_failed"].includes(error.message)) {
+      logEvent("INTERNAL_ERROR", requestId, { reason: "content_read_failed" });
+      return json({ error: { code: "content_read_failed", message: "تعذر قراءة بيانات المحتوى المطلوبة." } }, 502);
+    }
+    logEvent("INTERNAL_ERROR", requestId, { reason: "unhandled_error" });
     return json({ error: { code: "openrouter_unavailable", message: "خدمة المساعد غير متاحة حالياً. حاول مرة أخرى لاحقاً." } }, 503);
   }
 });
