@@ -78,3 +78,7 @@
 - [x] إضافة استدعاء Admin Web تجريبي دون أي عمليات كتابة أو حذف أو تعديل
 - [x] إضافة معالجة أخطاء timeout وrate limit و401/403 والاستجابة الفارغة
 - [x] اختبار عدم كشف OPENROUTER_API_KEY في الواجهة أو السجلات
+
+- [x] إضافة واجهة Chat Assistant محلية داخل AdminStudentWeb مرتبطة بـ admin-ai
+- [x] دعم رسائل Admin وAI وEnter وLoading وError وبدء محادثة جديدة
+- [x] اختبار Responsive وعدم إضافة أي Database mutation أو AI tools
