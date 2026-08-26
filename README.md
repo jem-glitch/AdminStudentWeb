@@ -28,6 +28,6 @@ VITE_SUPABASE_PUBLISHABLE_KEY=sb_publishable_...
 
 المفاتيح والأسرار لا تُحفظ في GitHub. صلاحيات التعديل محمية بواسطة Supabase Row Level Security، بينما القراءة العامة تقتصر على المحتوى المنشور.
 
-## Google/Gmail وNetlify
+## تسجيل الدخول التقليدي وNetlify
 
-فعّل Google Provider من Supabase Authentication، وضع Client ID وClient Secret في إعدادات Supabase فقط. أضف رابط Netlify النهائي ضمن Redirect URLs في Supabase، مثل `https://your-site.netlify.app/admin-web`. في Netlify استخدم أمر البناء `pnpm install --frozen-lockfile && pnpm build:web` ومجلد النشر `dist`. لا تستخدم نسخة تطبيق الطالب في Netlify؛ هذا المستودع خاص بالموقع الإداري فقط.
+أنشئ حساب الإدارة من Supabase Authentication باستخدام البريد الإلكتروني وكلمة المرور، ثم أضف `user_id` الخاص به إلى جدول `public.admin_profiles`. لا يحتاج الموقع إلى Google OAuth أو إعدادات Client ID/Client Secret. في Netlify استخدم أمر البناء `pnpm install --frozen-lockfile && pnpm build:web` ومجلد النشر `dist`. لا تستخدم نسخة تطبيق الطالب في Netlify؛ هذا المستودع خاص بالموقع الإداري فقط.
