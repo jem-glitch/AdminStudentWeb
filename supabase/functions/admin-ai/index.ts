@@ -155,57 +155,64 @@ Deno.serve(async (req: Request) => {
     const relevantContent = await readRelevantContent(client, message);
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 30000);
+    const modelCandidates = Array.from(new Set([model, "openai/gpt-4o-mini"]));
     try {
-      logEvent("OPENROUTER_REQUEST_STARTED", requestId);
-      const upstream = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-        method: "POST",
-        signal: controller.signal,
-        headers: {
-          "Authorization": `Bearer ${openRouterKey}`,
-          "Content-Type": "application/json",
-          "HTTP-Referer": Deno.env.get("OPENROUTER_HTTP_REFERER") ?? "https://adminstudentweb.local",
-          "X-OpenRouter-Title": Deno.env.get("OPENROUTER_APP_TITLE") ?? "Akadimiyat Masar Admin Assistant",
-        },
-        body: JSON.stringify({
-          model,
-          messages: [
-            { role: "system", content: "أنت AI Assistant إداري لمنصة أكاديمية مسار. AdminStudentWeb هي لوحة الإدارة، وStudent App يعرض المحتوى للطلاب، وSupabase مصدر المحتوى. أجب بالعربية اعتماداً حصراً على السياق المحدد المرفق. لا تتصل بقاعدة البيانات بنفسك، ولا تنفذ أي عملية، ولا تخترع بيانات. إذا لم تجد المطلوب في السياق فقل حرفياً: لم أجد هذه البيانات في المنصة." },
-            { role: "user", content: JSON.stringify({ question: message, relevant_content: relevantContent }) },
-          ],
-          stream: false,
-          temperature: 0.1,
-          max_tokens: 800,
-        }),
-      });
-      logEvent("OPENROUTER_RESPONSE_RECEIVED", requestId, { status: upstream.status });
-      if (!upstream.ok) {
-        let providerReason = "unknown";
-        try {
-          const errorPayload = await upstream.clone().json() as { error?: { code?: unknown; type?: unknown; message?: unknown } };
-          const raw = `${String(errorPayload.error?.code ?? "")} ${String(errorPayload.error?.type ?? "")} ${String(errorPayload.error?.message ?? "")}`.toLowerCase();
-          if (raw.includes("model")) providerReason = "model_configuration";
-          else if (raw.includes("token") || raw.includes("message") || raw.includes("request")) providerReason = "request_shape";
-          else if (raw.includes("auth") || raw.includes("key") || raw.includes("credential")) providerReason = "provider_auth";
-          else if (raw.includes("credit") || raw.includes("balance") || raw.includes("fund")) providerReason = "provider_credits";
-          else if (raw.includes("rate") || raw.includes("limit")) providerReason = "provider_rate_limit";
-        } catch {
-          providerReason = "unparseable_provider_error";
+      let lastHttpStatus = 502;
+      for (const requestModel of modelCandidates) {
+        logEvent("OPENROUTER_REQUEST_STARTED", requestId);
+        const upstream = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+          method: "POST",
+          signal: controller.signal,
+          headers: {
+            "Authorization": `Bearer ${openRouterKey}`,
+            "Content-Type": "application/json",
+            "HTTP-Referer": Deno.env.get("OPENROUTER_HTTP_REFERER") ?? "https://adminstudentweb.local",
+            "X-OpenRouter-Title": Deno.env.get("OPENROUTER_APP_TITLE") ?? "Akadimiyat Masar Admin Assistant",
+          },
+          body: JSON.stringify({
+            model: requestModel,
+            messages: [
+              { role: "system", content: "أنت AI Assistant إداري لمنصة أكاديمية مسار. AdminStudentWeb هي لوحة الإدارة، وStudent App يعرض المحتوى للطلاب، وSupabase مصدر المحتوى. أجب بالعربية اعتماداً حصراً على السياق المحدد المرفق. لا تتصل بقاعدة البيانات بنفسك، ولا تنفذ أي عملية، ولا تخترع بيانات. إذا لم تجد المطلوب في السياق فقل حرفياً: لم أجد هذه البيانات في المنصة." },
+              { role: "user", content: JSON.stringify({ question: message, relevant_content: relevantContent }) },
+            ],
+            stream: false,
+            temperature: 0.1,
+            max_tokens: 800,
+          }),
+        });
+        lastHttpStatus = upstream.status;
+        logEvent("OPENROUTER_RESPONSE_RECEIVED", requestId, { status: upstream.status });
+        if (!upstream.ok) {
+          let providerReason = "unknown";
+          try {
+            const errorPayload = await upstream.clone().json() as { error?: { code?: unknown; type?: unknown; message?: unknown } };
+            const raw = `${String(errorPayload.error?.code ?? "")} ${String(errorPayload.error?.type ?? "")} ${String(errorPayload.error?.message ?? "")}`.toLowerCase();
+            if (raw.includes("model")) providerReason = "model_configuration";
+            else if (raw.includes("token") || raw.includes("message") || raw.includes("request")) providerReason = "request_shape";
+            else if (raw.includes("auth") || raw.includes("key") || raw.includes("credential")) providerReason = "provider_auth";
+            else if (raw.includes("credit") || raw.includes("balance") || raw.includes("fund")) providerReason = "provider_credits";
+            else if (raw.includes("rate") || raw.includes("limit")) providerReason = "provider_rate_limit";
+          } catch {
+            providerReason = "unparseable_provider_error";
+          }
+          logEvent("OPENROUTER_HTTP_ERROR", requestId, { status: upstream.status, reason: providerReason });
+          if (providerReason === "model_configuration" && requestModel !== modelCandidates[modelCandidates.length - 1]) continue;
+          return json({ error: { code: `openrouter_${upstream.status}`, message: upstreamMessage(upstream.status) } }, upstream.status === 401 ? 502 : upstream.status === 429 ? 429 : upstream.status >= 500 ? 502 : 502);
         }
-        logEvent("OPENROUTER_HTTP_ERROR", requestId, { status: upstream.status, reason: providerReason });
-        return json({ error: { code: `openrouter_${upstream.status}`, message: upstreamMessage(upstream.status) } }, upstream.status === 401 ? 502 : upstream.status === 429 ? 429 : upstream.status >= 500 ? 502 : 502);
+        let payload: unknown;
+        try { payload = await upstream.json(); } catch {
+          logEvent("OPENROUTER_REQUEST_FAILED", requestId, { reason: "invalid_json", status: upstream.status });
+          return json({ error: { code: "openrouter_invalid_response", message: "تعذر قراءة استجابة المساعد." } }, 502);
+        }
+        const text = extractText(payload);
+        if (!text) {
+          logEvent("EMPTY_RESPONSE", requestId, { status: upstream.status });
+          return json({ error: { code: "empty_response", message: "عاد المساعد دون إجابة نصية." } }, 502);
+        }
+        logEvent("RESPONSE_RETURNED", requestId, { status: 200 });
+        return json({ data: { text, model: requestModel } });
       }
-      let payload: unknown;
-      try { payload = await upstream.json(); } catch {
-        logEvent("OPENROUTER_REQUEST_FAILED", requestId, { reason: "invalid_json", status: upstream.status });
-        return json({ error: { code: "openrouter_invalid_response", message: "تعذر قراءة استجابة المساعد." } }, 502);
-      }
-      const text = extractText(payload);
-      if (!text) {
-        logEvent("EMPTY_RESPONSE", requestId, { status: upstream.status });
-        return json({ error: { code: "empty_response", message: "عاد المساعد دون إجابة نصية." } }, 502);
-      }
-      logEvent("RESPONSE_RETURNED", requestId, { status: 200 });
-      return json({ data: { text, model } });
+      return json({ error: { code: `openrouter_${lastHttpStatus}`, message: upstreamMessage(lastHttpStatus) } }, 502);
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") {
         logEvent("OPENROUTER_TIMEOUT", requestId, { status: 408 });
