@@ -1,17 +1,15 @@
 import { createClient } from "@supabase/supabase-js";
 
-const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL ?? process.env.VITE_SUPABASE_URL;
-const supabasePublishableKey = process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? process.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL ?? process.env.VITE_SUPABASE_URL ?? "https://blilfynbajhcleiknbtk.supabase.co";
+const supabasePublishableKey = process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? process.env.VITE_SUPABASE_PUBLISHABLE_KEY ?? "sb_publishable_4t7vm8z-4aNON6Nae3HeGw_A-JlY6P6";
 
-export const supabaseConfigError = !supabaseUrl || !supabasePublishableKey
-  ? "لم يتم ضبط إعدادات Supabase العامة للموقع: EXPO_PUBLIC_SUPABASE_URL و EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY."
-  : null;
+export const supabaseConfigError = null;
 
 if (supabaseConfigError) console.warn(supabaseConfigError);
 
 export const supabase = createClient(
-  supabaseUrl ?? "https://placeholder.supabase.co",
-  supabasePublishableKey ?? "placeholder-publishable-key",
+  supabaseUrl,
+  supabasePublishableKey,
   {
     auth: {
       persistSession: true,
