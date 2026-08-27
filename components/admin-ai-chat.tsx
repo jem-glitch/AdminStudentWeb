@@ -1,151 +1,83 @@
 import { useState } from "react";
 import { Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import * as DocumentPicker from "expo-document-picker";
+import * as XLSX from "xlsx";
 
 import { supabase } from "@/lib/supabase";
 
-type ChatMessage = { id: string; role: "admin" | "ai"; text: string };
+type PreviewItem = { video_id: string; url: string; title?: string; description?: string | null; sort_order: number; original_sort_order?: number };
+type AcademicResolution = { status: "matched" | "not_matched"; stage?: { name: string } | null; subject?: { name: string } | null; teacher?: { name: string } | null; instruction?: string };
+type DraftValidation = { valid?: boolean; errors?: string[]; warnings?: string[]; duplicate_video_ids?: string[]; duplicate_existing_video_ids?: string[]; existing_course_id?: number | null };
+type DraftDetails = { id: string; status: "draft" | "approved" | "executed" | "cancelled" | "failed" | "expired"; action: string; expires_at?: string; source?: { title?: string | null; playlist_id?: string | null; item_count?: number }; target?: { status?: string; stage_id?: string | null; subject_id?: string | null; teacher_assignment_id?: string | null }; course?: { title?: string; description?: string | null; is_published?: boolean }; lessons?: PreviewItem[]; validation?: DraftValidation };
+type AiPreview = { intent: string; source: string; urls: string[]; playlist_items: PreviewItem[]; resources: { type: string; url?: string; title?: string; item_count?: number; error?: string; file_name?: string; row_count?: number }[]; warnings: string[]; academic_resolution?: AcademicResolution | null; execution_enabled: boolean; draft?: DraftDetails | null };
+type ChatMessage = { id: string; role: "admin" | "ai"; text: string; preview?: AiPreview | null };
+type AttachmentPayload = { name: string; mime_type?: string; rows?: Record<string, unknown>[]; text?: string };
+type DraftAction = "approve" | "execute" | "cancel" | "update_draft";
 
-const welcomeMessage: ChatMessage = {
-  id: "welcome",
-  role: "ai",
-  text: "مرحبًا، أنا مساعد الإدارة. يمكنني في هذه المرحلة الإجابة عن الأسئلة وتحليل الطلبات، لكنني لا أنفذ أي تغيير على بيانات المنصة.",
-};
+const MAX_FILE_SIZE = 2_000_000;
+const welcomeMessage: ChatMessage = { id: "welcome", role: "ai", text: "مرحبًا، أنا وكيل إدارة المحتوى. أستطيع تحليل روابط YouTube أو ملفات المحتوى وتجهيز مسودات للمراجعة. لا يُنشأ أو يُنشر أي محتوى قبل اعتمادك ثم تنفيذك الصريح." };
 
 async function diagnosticFromInvokeError(error: unknown) {
-  const context = (error as { context?: Response } | null)?.context;
-  const status = context?.status;
-  let code = "function_invoke_failed";
-  if (context) {
-    try {
-      const payload = await context.clone().json() as { error?: { code?: unknown } };
-      if (typeof payload.error?.code === "string" && payload.error.code.length <= 80) code = payload.error.code;
-    } catch {
-      // Keep the generic diagnostic code; never log the response body.
-    }
-  }
+  const context = (error as { context?: Response } | null)?.context; const status = context?.status; let code = "function_invoke_failed";
+  if (context) { try { const payload = await context.clone().json() as { error?: { code?: unknown } }; if (typeof payload.error?.code === "string" && payload.error.code.length <= 80) code = payload.error.code; } catch { /* Do not read or log response body. */ } }
   return { code, ...(typeof status === "number" ? { status } : {}) };
 }
 
-export function AdminAiChat() {
-  const [open, setOpen] = useState(false);
-  const [draft, setDraft] = useState("");
-  const [messages, setMessages] = useState<ChatMessage[]>([welcomeMessage]);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
+function messageForDraftAction(action: DraftAction) { return action === "approve" ? "اعتماد المسودة" : action === "execute" ? "تنفيذ المسودة" : action === "cancel" ? "إلغاء المسودة" : "تحديث المسودة"; }
 
-  async function sendMessage() {
-    const text = draft.trim();
-    if (!text || busy) return;
-    setDraft("");
-    setError("");
-    setBusy(true);
-    setMessages((current) => [...current, { id: `${Date.now()}-admin`, role: "admin", text }]);
-    try {
-      const { data, error: invokeError } = await supabase.functions.invoke("admin-ai", { body: { message: text } });
-      if (invokeError) {
-        const diagnostic = await diagnosticFromInvokeError(invokeError);
-        console.warn("[admin-ai] request_failed", diagnostic);
-        throw new Error(diagnostic.code);
-      }
-      const reply = typeof data?.data?.text === "string" ? data.data.text.trim() : "";
-      if (!reply) {
-        console.warn("[admin-ai] request_failed", { code: "empty_response" });
-        throw new Error("empty_response");
-      }
-      setMessages((current) => [...current, { id: `${Date.now()}-ai`, role: "ai", text: reply }]);
-    } catch {
-      setError("تعذر الاتصال بالمساعد، حاول مرة أخرى.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  function handleKeyPress(event: { nativeEvent: { key?: string; shiftKey?: boolean } }) {
-    if (Platform.OS === "web" && event.nativeEvent.key === "Enter" && !event.nativeEvent.shiftKey) {
-      void sendMessage();
-    }
-  }
-
-  function startNewChat() {
-    setMessages([{ ...welcomeMessage, id: `welcome-${Date.now()}` }]);
-    setDraft("");
-    setError("");
-  }
-
+function PreviewCard({ preview, busy, onAction }: { preview: AiPreview; busy: boolean; onAction: (action: DraftAction, draftId: string, patch?: { course: { title?: string; description?: string | null } }) => Promise<void> }) {
+  const detail = preview.draft; const [editing, setEditing] = useState(false); const [title, setTitle] = useState(detail?.course?.title ?? ""); const [description, setDescription] = useState(detail?.course?.description ?? "");
+  const validation = detail?.validation; const items = preview.playlist_items ?? detail?.lessons ?? []; const warnings = preview.warnings ?? []; const canApprove = detail?.status === "draft" && validation?.valid === true; const canExecute = detail?.status === "approved" && preview.execution_enabled; const canCancel = detail?.status === "draft" || detail?.status === "approved";
   return (
-    <View style={styles.wrapper}>
-      <View style={styles.header}>
-        <View style={styles.headerCopy}>
-          <Text style={styles.title}>مساعد الإدارة</Text>
-          <Text style={styles.subtitle}>إجابات وتحليل فقط، بدون تنفيذ تغييرات على البيانات.</Text>
-        </View>
-        <Pressable onPress={() => setOpen((current) => !current)} style={({ pressed }) => [styles.toggle, pressed && styles.pressed]}>
-          <Text style={styles.toggleText}>{open ? "إخفاء المساعد" : "فتح المساعد"}</Text>
-        </Pressable>
-      </View>
-      {open ? (
-        <View style={styles.chatPanel}>
-          <View style={styles.chatToolbar}>
-            <Text style={styles.toolbarHint}>المحادثة محلية لهذه الجلسة فقط</Text>
-            <Pressable onPress={startNewChat} disabled={busy} style={({ pressed }) => [styles.newChat, pressed && styles.pressed]}>
-              <Text style={styles.newChatText}>محادثة جديدة</Text>
-            </Pressable>
-          </View>
-          <ScrollView style={styles.messages} contentContainerStyle={styles.messagesContent} showsVerticalScrollIndicator={false}>
-            {messages.map((message) => (
-              <View key={message.id} style={[styles.messageRow, message.role === "admin" ? styles.adminRow : styles.aiRow]}>
-                <View style={[styles.bubble, message.role === "admin" ? styles.adminBubble : styles.aiBubble]}>
-                  <Text style={[styles.role, message.role === "admin" && styles.adminRole]}>{message.role === "admin" ? "أنت" : "AI Assistant"}</Text>
-                  <Text style={[styles.messageText, message.role === "admin" && styles.adminMessageText]}>{message.text}</Text>
-                </View>
-              </View>
-            ))}
-            {busy ? <View style={[styles.messageRow, styles.aiRow]}><View style={[styles.bubble, styles.aiBubble]}><Text style={styles.role}>AI Assistant</Text><Text style={styles.thinking}>جاري التفكير...</Text></View></View> : null}
-          </ScrollView>
-          {error ? <Text style={styles.error}>{error}</Text> : null}
-          <View style={styles.composer}>
-            <TextInput value={draft} onChangeText={setDraft} onKeyPress={handleKeyPress} onSubmitEditing={() => void sendMessage()} returnKeyType="send" blurOnSubmit={false} multiline placeholder="اكتب رسالة للمساعد..." placeholderTextColor="#8A96A3" style={styles.input} editable={!busy} />
-            <Pressable onPress={() => void sendMessage()} disabled={busy || !draft.trim()} style={({ pressed }) => [styles.send, pressed && styles.pressed, (busy || !draft.trim()) && styles.disabled]}>
-              <Text style={styles.sendText}>{busy ? "..." : "إرسال"}</Text>
-            </Pressable>
-          </View>
-        </View>
-      ) : null}
+    <View style={styles.previewCard}>
+      <Text style={styles.previewTitle}>{detail ? "مسودة محتوى — راجع قبل التنفيذ" : "معاينة التحليل — بدون حفظ"}</Text>
+      <Text style={styles.previewMeta}>النوع: {preview.intent} · المصدر: {preview.source}</Text>
+      {detail?.status ? <Text style={styles.previewStatus}>الحالة: {detail.status === "draft" ? "تحتاج اعتمادًا" : detail.status === "approved" ? "معتمدة وتنتظر التنفيذ" : detail.status === "executed" ? "نُفذت" : detail.status === "cancelled" ? "ملغاة" : "غير صالحة أو منتهية"}</Text> : null}
+      {detail?.source?.title ? <Text style={styles.previewMeta}>عنوان المصدر: {detail.source.title}</Text> : null}
+      {items.length ? <Text style={styles.previewMeta}>عدد الفيديوهات/الدروس: {items.length}</Text> : null}
+      {preview.academic_resolution ? <Text style={preview.academic_resolution.status === "matched" ? styles.previewMatched : styles.previewWarning}>العلاقة الأكاديمية: {preview.academic_resolution.status === "matched" ? "موجودة" : "غير موجودة"}{preview.academic_resolution.stage?.name ? ` · ${preview.academic_resolution.stage.name}` : ""}{preview.academic_resolution.subject?.name ? ` · ${preview.academic_resolution.subject.name}` : ""}{preview.academic_resolution.teacher?.name ? ` · ${preview.academic_resolution.teacher.name}` : ""}</Text> : null}
+      {detail?.course ? <View style={styles.courseDraft}><Text style={styles.draftLabel}>الكورس المقترح</Text>{editing ? <><TextInput value={title} onChangeText={setTitle} editable={!busy} placeholder="عنوان الكورس" placeholderTextColor="#8A96A3" style={styles.draftInput} /><TextInput value={description} onChangeText={setDescription} editable={!busy} multiline placeholder="وصف الكورس" placeholderTextColor="#8A96A3" style={[styles.draftInput, styles.draftDescription]} /></> : <><Text style={styles.previewMeta}>{detail.course.title || "العنوان غير محدد"}</Text>{detail.course.description ? <Text style={styles.previewMeta}>{detail.course.description}</Text> : null}</>}</View> : null}
+      {items.slice(0, 20).map((item) => <Text key={`${item.sort_order}-${item.video_id}`} style={styles.previewItem}>{item.sort_order}. {item.title ?? item.video_id}</Text>)}
+      {items.length > 20 ? <Text style={styles.previewMeta}>… تم إخفاء بقية الدروس من هذه البطاقة، وستبقى ضمن المسودة.</Text> : null}
+      {validation?.errors?.map((item, index) => <Text key={`error-${index}-${item}`} style={styles.previewError}>يتطلب معالجة: {item}</Text>)}
+      {[...warnings, ...(validation?.warnings ?? [])].filter((item, index, list) => list.indexOf(item) === index).map((warning, index) => <Text key={`${index}-${warning}`} style={styles.previewWarning}>تحذير: {warning}</Text>)}
+      {detail ? <View style={styles.previewActions}>{editing ? <><Pressable onPress={() => void onAction("update_draft", detail.id, { course: { title, description: description.trim() || null } })} disabled={busy} style={({ pressed }) => [styles.previewButton, busy && styles.disabled, pressed && styles.pressed]}><Text style={styles.previewButtonText}>حفظ التعديل</Text></Pressable><Pressable onPress={() => setEditing(false)} disabled={busy} style={({ pressed }) => [styles.previewCancel, busy && styles.disabled, pressed && styles.pressed]}><Text style={styles.previewCancelText}>إلغاء التعديل</Text></Pressable></> : <><Pressable onPress={() => void onAction("approve", detail.id)} disabled={busy || !canApprove} style={({ pressed }) => [styles.previewButton, (busy || !canApprove) && styles.disabled, pressed && styles.pressed]}><Text style={styles.previewButtonText}>اعتماد</Text></Pressable><Pressable onPress={() => void onAction("execute", detail.id)} disabled={busy || !canExecute} style={({ pressed }) => [styles.executeButton, (busy || !canExecute) && styles.disabled, pressed && styles.pressed]}><Text style={styles.executeButtonText}>تنفيذ</Text></Pressable><Pressable onPress={() => setEditing(true)} disabled={busy || detail.status !== "draft"} style={({ pressed }) => [styles.previewButton, (busy || detail.status !== "draft") && styles.disabled, pressed && styles.pressed]}><Text style={styles.previewButtonText}>تعديل</Text></Pressable><Pressable onPress={() => void onAction("cancel", detail.id)} disabled={busy || !canCancel} style={({ pressed }) => [styles.previewCancel, (busy || !canCancel) && styles.disabled, pressed && styles.pressed]}><Text style={styles.previewCancelText}>إلغاء</Text></Pressable></>}</View> : null}
     </View>
   );
 }
 
+async function attachmentFromAsset(asset: DocumentPicker.DocumentPickerAsset): Promise<AttachmentPayload> {
+  if ((asset.size ?? 0) > MAX_FILE_SIZE) throw new Error("file_too_large"); const name = asset.name || "content-file"; const extension = name.split(".").pop()?.toLowerCase() ?? ""; const webFile = asset.file;
+  if (["xlsx", "xls"].includes(extension)) { if (!webFile) throw new Error("spreadsheet_requires_web"); const workbook = XLSX.read(await webFile.arrayBuffer(), { type: "array" }); const sheet = workbook.Sheets[workbook.SheetNames[0] ?? ""]; const rows = sheet ? XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "" }).slice(0, 200) : []; return { name, mime_type: asset.mimeType ?? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", rows }; }
+  const text = webFile ? await webFile.text() : await (await fetch(asset.uri)).text(); if (text.length > 300_000) throw new Error("file_too_large");
+  if (extension === "json") { const parsed = JSON.parse(text) as unknown; const rows = Array.isArray(parsed) ? parsed : (parsed as { lessons?: unknown }).lessons; if (!Array.isArray(rows)) throw new Error("json_rows_required"); return { name, mime_type: asset.mimeType ?? "application/json", rows: rows.slice(0, 200).filter((row): row is Record<string, unknown> => Boolean(row && typeof row === "object")) }; }
+  if (!["csv", "txt", "md", "markdown"].includes(extension)) throw new Error("file_type_not_supported");
+  if (extension === "csv") { const workbook = XLSX.read(text, { type: "string" }); const sheet = workbook.Sheets[workbook.SheetNames[0] ?? ""]; return { name, mime_type: asset.mimeType ?? "text/csv", rows: sheet ? XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "" }).slice(0, 200) : [] }; }
+  return { name, mime_type: asset.mimeType ?? "text/plain", text };
+}
+
+export function AdminAiChat() {
+  const [open, setOpen] = useState(false); const [draft, setDraft] = useState(""); const [messages, setMessages] = useState<ChatMessage[]>([welcomeMessage]); const [busy, setBusy] = useState(false); const [error, setError] = useState(""); const [attachments, setAttachments] = useState<AttachmentPayload[]>([]);
+
+  async function sendMessage(action: "analyze" | DraftAction = "analyze", draftId?: string, patch?: { course: { title?: string; description?: string | null } }) {
+    const text = draft.trim(); if ((action === "analyze" && !text && !attachments.length) || busy) return; setDraft(""); setError(""); setBusy(true);
+    if (action === "analyze") setMessages((current) => [...current, { id: `${Date.now()}-admin`, role: "admin", text: `${text || "تحليل ملف مرفق"}${attachments.length ? `\nمرفق: ${attachments.map((item) => item.name).join("، ")}` : ""}` }]);
+    else setMessages((current) => [...current, { id: `${Date.now()}-admin-action`, role: "admin", text: messageForDraftAction(action) }]);
+    try {
+      const body = { message: text || (action === "analyze" ? "حلل الملف المرفق" : messageForDraftAction(action)), action, ...(draftId ? { draft_id: draftId } : {}), ...(patch ? { draft_patch: patch } : {}), ...(action === "analyze" && attachments.length ? { attachments } : {}) };
+      const { data, error: invokeError } = await supabase.functions.invoke("admin-ai", { body }); if (invokeError) { const diagnostic = await diagnosticFromInvokeError(invokeError); console.warn("[admin-ai] request_failed", diagnostic); throw new Error(diagnostic.code); }
+      const reply = typeof data?.data?.text === "string" ? data.data.text.trim() : ""; const preview = data?.data?.preview && typeof data.data.preview === "object" ? data.data.preview as AiPreview : null; if (!reply) { console.warn("[admin-ai] request_failed", { code: "empty_response" }); throw new Error("empty_response"); }
+      setMessages((current) => [...current, { id: `${Date.now()}-ai`, role: "ai", text: reply, preview }]); if (action === "analyze") setAttachments([]);
+    } catch { setError("تعذر إتمام طلب وكيل المحتوى. راجع حالة المسودة أو حاول مرة أخرى."); } finally { setBusy(false); }
+  }
+
+  async function pickAttachment() { try { const result = await DocumentPicker.getDocumentAsync({ type: ["text/csv", "application/json", "text/plain", "text/markdown", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.ms-excel"], copyToCacheDirectory: true }); if (result.canceled) return; const attachment = await attachmentFromAsset(result.assets[0]); setAttachments((current) => [...current.slice(-1), attachment]); setError(""); } catch (caught) { const code = caught instanceof Error ? caught.message : "attachment_invalid"; console.warn("[admin-ai] attachment_failed", { code }); setError(code === "file_type_not_supported" ? "الملف غير مدعوم. استخدم CSV أو XLSX أو JSON أو TXT أو Markdown." : code === "file_too_large" ? "الحد الأقصى لحجم الملف هو 2MB." : "تعذر قراءة الملف. تحقق من صيغته ثم حاول مرة أخرى."); } }
+  function handleKeyPress(event: { nativeEvent: { key?: string; shiftKey?: boolean } }) { if (Platform.OS === "web" && event.nativeEvent.key === "Enter" && !event.nativeEvent.shiftKey) void sendMessage(); }
+  function startNewChat() { setMessages([{ ...welcomeMessage, id: `welcome-${Date.now()}` }]); setDraft(""); setAttachments([]); setError(""); }
+
+  return (<View style={styles.wrapper}><View style={styles.header}><View style={styles.headerCopy}><Text style={styles.title}>وكيل إدارة المحتوى</Text><Text style={styles.subtitle}>حلّل روابط YouTube أو الملفات، ثم راجع واعتمد ونفّذ. لا يُنشأ شيء تلقائياً.</Text></View><Pressable onPress={() => setOpen((current) => !current)} style={({ pressed }) => [styles.toggle, pressed && styles.pressed]}><Text style={styles.toggleText}>{open ? "إخفاء الوكيل" : "فتح الوكيل"}</Text></Pressable></View>{open ? <View style={styles.chatPanel}><View style={styles.chatToolbar}><Text style={styles.toolbarHint}>المحادثة محلية لهذه الجلسة فقط</Text><Pressable onPress={startNewChat} disabled={busy} style={({ pressed }) => [styles.newChat, pressed && styles.pressed]}><Text style={styles.newChatText}>محادثة جديدة</Text></Pressable></View><ScrollView style={styles.messages} contentContainerStyle={styles.messagesContent} showsVerticalScrollIndicator={false}>{messages.map((message) => <View key={message.id} style={[styles.messageRow, message.role === "admin" ? styles.adminRow : styles.aiRow]}><View style={[styles.bubble, message.role === "admin" ? styles.adminBubble : styles.aiBubble]}><Text style={[styles.role, message.role === "admin" && styles.adminRole]}>{message.role === "admin" ? "أنت" : "AI Agent"}</Text><Text style={[styles.messageText, message.role === "admin" && styles.adminMessageText]}>{message.text}</Text>{message.preview ? <PreviewCard preview={message.preview} busy={busy} onAction={sendMessage} /> : null}</View></View>)}{busy ? <View style={[styles.messageRow, styles.aiRow]}><View style={[styles.bubble, styles.aiBubble]}><Text style={styles.role}>AI Agent</Text><Text style={styles.thinking}>جاري التحليل أو التحقق…</Text></View></View> : null}</ScrollView>{error ? <Text style={styles.error}>{error}</Text> : null}{attachments.length ? <View style={styles.attachmentRow}>{attachments.map((item) => <View key={item.name} style={styles.attachmentChip}><Text style={styles.attachmentText}>مرفق: {item.name}</Text><Pressable onPress={() => setAttachments((current) => current.filter((candidate) => candidate.name !== item.name))} disabled={busy}><Text style={styles.attachmentRemove}>×</Text></Pressable></View>)}</View> : null}<View style={styles.composer}><TextInput value={draft} onChangeText={setDraft} onKeyPress={handleKeyPress} onSubmitEditing={() => void sendMessage()} returnKeyType="send" blurOnSubmit={false} multiline placeholder="اكتب طلباً أو أرفق ملفاً للمراجعة…" placeholderTextColor="#8A96A3" style={styles.input} editable={!busy} /><Pressable onPress={() => void pickAttachment()} disabled={busy || attachments.length >= 2} style={({ pressed }) => [styles.attach, (busy || attachments.length >= 2) && styles.disabled, pressed && styles.pressed]}><Text style={styles.attachText}>إرفاق</Text></Pressable><Pressable onPress={() => void sendMessage()} disabled={busy || (!draft.trim() && !attachments.length)} style={({ pressed }) => [styles.send, pressed && styles.pressed, (busy || (!draft.trim() && !attachments.length)) && styles.disabled]}><Text style={styles.sendText}>{busy ? "..." : "إرسال"}</Text></Pressable></View></View> : null}</View>);
+}
+
 const styles = StyleSheet.create({
-  wrapper: { backgroundColor: "#F0F7F9", borderRadius: 17, borderWidth: 1, borderColor: "#B8DCE4", padding: 18, marginBottom: 18 },
-  header: { flexDirection: "row-reverse", alignItems: "center", justifyContent: "space-between", gap: 14 },
-  headerCopy: { flex: 1 },
-  title: { color: "#17212B", fontSize: 18, fontWeight: "800", textAlign: "right" },
-  subtitle: { color: "#697586", fontSize: 12, lineHeight: 19, textAlign: "right", marginTop: 4 },
-  toggle: { backgroundColor: "#176B87", borderRadius: 10, paddingHorizontal: 13, paddingVertical: 10 },
-  toggleText: { color: "#FFFFFF", fontSize: 12, fontWeight: "800" },
-  chatPanel: { backgroundColor: "#FFFFFF", borderRadius: 14, marginTop: 16, padding: 13, borderWidth: 1, borderColor: "#DDE2E6" },
-  chatToolbar: { flexDirection: "row-reverse", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 10 },
-  toolbarHint: { color: "#8A96A3", fontSize: 11, textAlign: "right" },
-  newChat: { borderWidth: 1, borderColor: "#DDE2E6", borderRadius: 9, paddingHorizontal: 10, paddingVertical: 7 },
-  newChatText: { color: "#176B87", fontSize: 11, fontWeight: "800" },
-  messages: { maxHeight: 330, minHeight: 160 },
-  messagesContent: { gap: 9, paddingVertical: 5 },
-  messageRow: { flexDirection: "row", width: "100%" },
-  adminRow: { justifyContent: "flex-start" },
-  aiRow: { justifyContent: "flex-end" },
-  bubble: { maxWidth: "88%", borderRadius: 13, padding: 11 },
-  adminBubble: { backgroundColor: "#176B87", borderBottomLeftRadius: 4 },
-  aiBubble: { backgroundColor: "#F5F7F8", borderWidth: 1, borderColor: "#E4E8EB", borderBottomRightRadius: 4 },
-  role: { color: "#697586", fontSize: 10, fontWeight: "800", textAlign: "right", marginBottom: 3 },
-  adminRole: { color: "#DCEFF3" },
-  messageText: { color: "#17212B", fontSize: 13, lineHeight: 21, textAlign: "right" },
-  adminMessageText: { color: "#FFFFFF" },
-  thinking: { color: "#697586", fontSize: 12, textAlign: "right" },
-  composer: { flexDirection: "row-reverse", alignItems: "flex-end", gap: 8, marginTop: 10 },
-  input: { flex: 1, minHeight: 44, maxHeight: 100, borderWidth: 1, borderColor: "#DDE2E6", borderRadius: 11, paddingHorizontal: 11, paddingTop: 10, color: "#17212B", fontSize: 13, textAlign: "right", textAlignVertical: "top" },
-  send: { minHeight: 44, borderRadius: 11, backgroundColor: "#176B87", paddingHorizontal: 15, alignItems: "center", justifyContent: "center" },
-  sendText: { color: "#FFFFFF", fontSize: 12, fontWeight: "800" },
-  error: { color: "#C94B4B", fontSize: 12, lineHeight: 19, textAlign: "right", marginTop: 8 },
-  disabled: { opacity: 0.5 },
-  pressed: { opacity: 0.72, transform: [{ scale: 0.98 }] },
+  wrapper: { backgroundColor: "#F0F7F9", borderRadius: 17, borderWidth: 1, borderColor: "#B8DCE4", padding: 18, marginBottom: 18 }, header: { flexDirection: "row-reverse", alignItems: "center", justifyContent: "space-between", gap: 14 }, headerCopy: { flex: 1 }, title: { color: "#17212B", fontSize: 18, fontWeight: "800", textAlign: "right" }, subtitle: { color: "#697586", fontSize: 12, lineHeight: 19, textAlign: "right", marginTop: 4 }, toggle: { backgroundColor: "#176B87", borderRadius: 10, paddingHorizontal: 13, paddingVertical: 10 }, toggleText: { color: "#FFFFFF", fontSize: 12, fontWeight: "800" }, chatPanel: { backgroundColor: "#FFFFFF", borderRadius: 14, marginTop: 16, padding: 13, borderWidth: 1, borderColor: "#DDE2E6" }, chatToolbar: { flexDirection: "row-reverse", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 10 }, toolbarHint: { color: "#8A96A3", fontSize: 11, textAlign: "right" }, newChat: { borderWidth: 1, borderColor: "#DDE2E6", borderRadius: 9, paddingHorizontal: 10, paddingVertical: 7 }, newChatText: { color: "#176B87", fontSize: 11, fontWeight: "800" }, messages: { maxHeight: 470, minHeight: 180 }, messagesContent: { gap: 9, paddingVertical: 5 }, messageRow: { flexDirection: "row", width: "100%" }, adminRow: { justifyContent: "flex-start" }, aiRow: { justifyContent: "flex-end" }, bubble: { maxWidth: "94%", borderRadius: 13, padding: 11 }, adminBubble: { backgroundColor: "#176B87", borderBottomLeftRadius: 4 }, aiBubble: { backgroundColor: "#F5F7F8", borderWidth: 1, borderColor: "#E4E8EB", borderBottomRightRadius: 4 }, role: { color: "#697586", fontSize: 10, fontWeight: "800", textAlign: "right", marginBottom: 3 }, adminRole: { color: "#DCEFF3" }, messageText: { color: "#17212B", fontSize: 13, lineHeight: 21, textAlign: "right" }, adminMessageText: { color: "#FFFFFF" }, thinking: { color: "#697586", fontSize: 12, textAlign: "right" }, composer: { flexDirection: "row-reverse", alignItems: "flex-end", gap: 8, marginTop: 10 }, input: { flex: 1, minHeight: 44, maxHeight: 100, borderWidth: 1, borderColor: "#DDE2E6", borderRadius: 11, paddingHorizontal: 11, paddingTop: 10, color: "#17212B", fontSize: 13, textAlign: "right", textAlignVertical: "top" }, send: { minHeight: 44, borderRadius: 11, backgroundColor: "#176B87", paddingHorizontal: 15, alignItems: "center", justifyContent: "center" }, sendText: { color: "#FFFFFF", fontSize: 12, fontWeight: "800" }, attach: { minHeight: 44, borderRadius: 11, backgroundColor: "#DCEFF3", paddingHorizontal: 11, alignItems: "center", justifyContent: "center" }, attachText: { color: "#176B87", fontSize: 11, fontWeight: "800" }, error: { color: "#C94B4B", fontSize: 12, lineHeight: 19, textAlign: "right", marginTop: 8 }, disabled: { opacity: 0.48 }, pressed: { opacity: 0.72, transform: [{ scale: 0.98 }] }, previewCard: { marginTop: 9, borderRadius: 10, borderWidth: 1, borderColor: "#B8DCE4", backgroundColor: "#F0F7F9", padding: 9 }, previewTitle: { color: "#176B87", fontSize: 12, fontWeight: "800", textAlign: "right" }, previewMeta: { color: "#526170", fontSize: 11, lineHeight: 18, textAlign: "right", marginTop: 3 }, previewStatus: { color: "#176B87", fontSize: 11, fontWeight: "800", textAlign: "right", marginTop: 4 }, previewItem: { color: "#263746", fontSize: 11, lineHeight: 18, textAlign: "right", marginTop: 2 }, previewWarning: { color: "#9A5A16", fontSize: 11, lineHeight: 18, textAlign: "right", marginTop: 3 }, previewError: { color: "#B42318", fontSize: 11, lineHeight: 18, textAlign: "right", marginTop: 3, fontWeight: "700" }, previewMatched: { color: "#19734A", fontSize: 11, lineHeight: 18, textAlign: "right", marginTop: 3 }, previewActions: { flexDirection: "row-reverse", gap: 6, marginTop: 8, flexWrap: "wrap" }, previewButton: { borderRadius: 7, backgroundColor: "#DCEFF3", paddingHorizontal: 8, paddingVertical: 6 }, previewButtonText: { color: "#176B87", fontSize: 10, fontWeight: "800" }, executeButton: { borderRadius: 7, backgroundColor: "#19734A", paddingHorizontal: 8, paddingVertical: 6 }, executeButtonText: { color: "#FFFFFF", fontSize: 10, fontWeight: "800" }, previewCancel: { borderRadius: 7, borderWidth: 1, borderColor: "#CDD5DB", paddingHorizontal: 8, paddingVertical: 6 }, previewCancelText: { color: "#697586", fontSize: 10, fontWeight: "800" }, courseDraft: { borderTopWidth: 1, borderTopColor: "#D5E8EC", marginTop: 8, paddingTop: 7 }, draftLabel: { color: "#176B87", fontSize: 10, fontWeight: "800", textAlign: "right" }, draftInput: { minHeight: 34, borderWidth: 1, borderColor: "#B8DCE4", borderRadius: 7, backgroundColor: "#FFFFFF", paddingHorizontal: 8, paddingVertical: 6, color: "#17212B", fontSize: 11, textAlign: "right", marginTop: 5 }, draftDescription: { minHeight: 60, textAlignVertical: "top" }, attachmentRow: { flexDirection: "row-reverse", gap: 6, flexWrap: "wrap", marginTop: 8 }, attachmentChip: { flexDirection: "row-reverse", alignItems: "center", gap: 6, backgroundColor: "#E8F2F5", borderRadius: 8, paddingHorizontal: 8, paddingVertical: 5 }, attachmentText: { color: "#176B87", fontSize: 10, fontWeight: "700" }, attachmentRemove: { color: "#C94B4B", fontSize: 16, lineHeight: 16, fontWeight: "700" },
 });
