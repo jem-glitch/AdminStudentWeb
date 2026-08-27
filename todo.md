@@ -183,3 +183,5 @@
 - [x] تصحيح دلالة Audit Log لمرحلة إنشاء المسودة حتى لا تُسجل كموافقة
 - [x] التحقق من عدم استخدام YouTube Data API أو Service Role Key في العميل وعدم تسريب الأسرار
 - [ ] حفظ checkpoint وإعداد تقرير تنفيذ شامل
+- [x] إعداد تقرير تنفيذ شامل لوكيل المحتوى في `docs/admin-ai-content-agent-final-report.ar.md`
+- [ ] حفظ checkpoint مُدار عند فتح AdminStudentWeb كمشروع نشط مستقل
