@@ -142,7 +142,14 @@ async function findExistingForDraft(client: ReturnType<typeof createClient>, pay
 }
 
 async function resolveActionCourse(client: ReturnType<typeof createClient>, question: string) {
-  const terms = termsFromQuestion(question); const { data, error } = await client.from("courses").select("id,title,description,category_id,teacher_assignment_id,is_published").order("title").limit(100); if (error) throw new Error("course_read_failed"); const matched = ((data ?? []) as CourseRow[]).filter((course) => terms.some((term) => normalizeText(course.title).includes(normalizeText(term)))); return matched.length === 1 ? matched[0] : null;
+  const explicitId = question.match(/(?:رقم|id|معرف)\s*#?\s*(\d+)/i)?.[1];
+  const query = client.from("courses").select("id,title,description,category_id,teacher_assignment_id,is_published");
+  if (explicitId) {
+    const { data, error } = await query.eq("id", Number(explicitId)).limit(1);
+    if (error) throw new Error("course_read_failed");
+    return ((data ?? []) as CourseRow[])[0] ?? null;
+  }
+  const terms = termsFromQuestion(question); const { data, error } = await query.order("title").limit(100); if (error) throw new Error("course_read_failed"); const matched = ((data ?? []) as CourseRow[]).filter((course) => terms.some((term) => normalizeText(course.title).includes(normalizeText(term)))); return matched.length === 1 ? matched[0] : null;
 }
 
 function actionPayload(intent: DraftIntent, course: CourseRow | null, question: string): CourseDraftPayload {
