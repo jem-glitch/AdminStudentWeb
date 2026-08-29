@@ -2706,7 +2706,7 @@
 - [ ] اختبار Academic Target وTeacher Assignment غير الموجود وDraft/Approve/Execute/Idempotency/Verify/Delete
 - [ ] تنفيذ تجربة حاسمة واحدة فقط بعد تحديد حدودها وموافقة Admin الصريحة، دون تغيير محتوى حقيقي
 - [ ] كتابة تقرير قرار Provider والنتائج والقيود والتكلفة ثم التوقف
-- [ ] لا YouTube Data API أو YouTube API Key أو OAuth أو تنزيل أو CAPTCHA/login bypass
+- [x] لا YouTube Data API أو YouTube API Key أو OAuth أو تنزيل أو CAPTCHA/login bypass
 - [ ] لا إعادة بناء Admin Web أو Student App أو Schema دون ضرورة موثقة
 - [ ] لا إضافة Provider غير موثوق أو دمجه دون مراجعة المصدر والـLicense والاعتمادات
 
@@ -2748,3 +2748,20 @@
 - [x] لا إرسال HTML أو Playlist raw إلى OpenRouter
 - [x] لا طلبات خارجية قبل ضبط Secret server-side ووجود Playlist اختبارية عامة
 - [x] بعد التقرير يتوقف العمل
+
+
+# إعادة تأكيد اختبار TranscriptAPI — اعتماد Provider الأول
+
+- [x] مراجعة التقرير الحي الموجود للـPlaylist المقدمة
+- [x] تأكيد عدم وجود OpenRouter أو Course Import أو INSERT/UPDATE/DELETE في هذا الاختبار
+- [x] تأكيد قائمة الملفات المعدلة والـcommit النهائي
+- [x] إرسال التقرير المطلوب ثم التوقف
+
+# قيود الاعتماد
+
+- [x] Provider قابل للاستبدال مستقبلاً
+- [x] لا YouTube Data API أو YouTube API Key
+- [x] لا MCP داخل Edge Function
+- [x] لا Student App أو Schema changes
+- [x] لا Course/Lesson creation أو تعديل أو حذف
+- [x] لا انتقال إلى AI Course Import أو Execute بعد التقرير
