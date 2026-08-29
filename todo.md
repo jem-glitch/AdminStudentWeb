@@ -2687,3 +2687,64 @@
 
 - [x] فشل Draft حذف أولى لأن parser لم يستخرج Course بالعنوان/الرقم، ثم أُصلح قبل الحذف
 - [x] لا يجوز تنفيذ حذف مباشر عبر SQL؛ الحذف مر عبر admin-ai وApproval
+
+
+# هدف pasted_content_12.txt — YouTube Playlist Provider
+
+- [ ] قراءة بقية الملف المرفق وتثبيت الهدف النهائي ومتطلبات الاختبار
+- [ ] تقييم ZeroPointRepo/youtube-skills وTranscriptAPI ومصدره وLicense واعتماداته ومتطلبات أسراره وFree Tier وRate Limits وتوافقه مع Supabase Edge Functions وpagination
+- [ ] عدم اعتماد أي Provider قبل تقرير تقييم مختصر وقرار واضح
+- [ ] تصميم abstraction باسم YouTubePlaylistProvider مع metadata/videos/transcript اختيارية
+- [ ] إضافة Provider configuration server-side دون وضع أسرار في Admin Web أو GitHub
+- [ ] إضافة ingestion cache أثناء عملية Draft ومنع إعادة الجلب غير الضروري
+- [ ] دعم pagination وحد أمان منطقي وعدم الاقتصار على أول 50 فيديو
+- [ ] إبقاء HTML العام fallback فقط، مع fallback جماعي من روابط أو CSV/JSON
+- [ ] إرسال structured playlist data إلى AI دون HTML وعدم اختلاق metadata
+- [ ] الحفاظ على order وvideo_count الفعلي وPlaylist/Channel metadata عند توفرها
+- [ ] إبقاء Transcript اختيارياً وغير مطلوب للاستيراد
+- [ ] اختبار Playlist صغيرة وأكبر من صفحة وتكرار وفشل و429 وfallback وCSV وJSON وVideo مفرد
+- [ ] اختبار Academic Target وTeacher Assignment غير الموجود وDraft/Approve/Execute/Idempotency/Verify/Delete
+- [ ] تنفيذ تجربة حاسمة واحدة فقط بعد تحديد حدودها وموافقة Admin الصريحة، دون تغيير محتوى حقيقي
+- [ ] كتابة تقرير قرار Provider والنتائج والقيود والتكلفة ثم التوقف
+- [ ] لا YouTube Data API أو YouTube API Key أو OAuth أو تنزيل أو CAPTCHA/login bypass
+- [ ] لا إعادة بناء Admin Web أو Student App أو Schema دون ضرورة موثقة
+- [ ] لا إضافة Provider غير موثوق أو دمجه دون مراجعة المصدر والـLicense والاعتمادات
+
+# حالة هدف Playlist ingestion
+
+- [ ] Admin AI يعمل وSupabase Read وDraft/Approve/Execute موجودة
+- [ ] المشكلة الأساسية: الاعتماد الحالي على YouTube HTML وHTTP 429
+- [ ] الأولوية: تقييم Provider متخصص ثم abstraction قابلة للاستبدال
+- [ ] لا يبدأ الدمج قبل اكتمال تقييم Provider
+- [ ] لا تُنفذ تجربة Playlist حاسمة على محتوى حقيقي دون موافقة منفصلة
+
+
+# اختبار TranscriptAPI الحي — pasted_content_13.txt
+
+- [x] قراءة الملف وتثبيت نطاق الاختبار: Playlist صغيرة، JSON خام، بلا OpenRouter أو Course Import أو Course/Lesson mutation
+- [x] قراءة مهارات automation-and-scheduling وmanus-config وwebdev-readme-fullstack قبل تكامل الخدمة الخارجية
+- [x] فحص إعدادات connectors الحالية قبل طلب Secret أو استخدام MCP
+- [x] طلب `TRANSCRIPTAPI_API_KEY` كـSecret server-side فقط عبر إعدادات المشروع
+- [x] إضافة `YouTubePlaylistProvider` abstraction مستقل قابل للاستبدال
+- [x] إضافة `TranscriptApiYouTubeProvider` عبر REST endpoint الرسمي وUser-Agent مناسب
+- [x] إضافة تطبيع playlist metadata/items مع null للبيانات غير المتاحة والحفاظ على index
+- [x] إضافة pagination عبر continuation_token وحد أمان منطقي
+- [ ] إضافة cache مؤقت أثناء الاختبار ومنع إعادة الجلب غير الضروري
+- [x] إضافة logs آمنة لـTRANSCRIPTAPI_REQUEST/SUCCESS/ERROR/RATE_LIMIT/PLAYLIST_ITEMS_EXTRACTED
+- [x] إضافة fallback واضح إلى روابط جماعية وCSV/JSON دون رسالة منصة مضللة
+- [x] اختبار Playlist حقيقية صغيرة وpagination دون استخدام AI
+- [x] محاكاة أخطاء 401/402/403/404/408/422/429 دون استهلاك quota غير ضروري
+- [x] التحقق من structured JSON والـplaylist title والـvideo count والـIDs والعناوين والترتيب
+- [x] التحقق من عدم ظهور Secret في frontend/GitHub/Netlify/OpenRouter/logs
+- [x] كتابة تقرير الاتصال والعدد والصحة والـpagination والcredits وrate limit وfallback ثم التوقف
+- [x] عدم دمج Provider في Course Import قبل نتيجة الاختبار وقرار مستقل
+- [x] عدم تغيير Student App أو Schema أو HTML fallback أو إضافة AI Actions
+
+# حدود التشغيل
+
+- [x] لا YouTube Data API أو Google Cloud YouTube API أو YouTube API Key أو YouTube OAuth
+- [x] لا تنزيل فيديو أو CAPTCHA/login bypass أو scraping عدواني
+- [x] لا إنشاء أو تعديل أو حذف Course/Lesson
+- [x] لا إرسال HTML أو Playlist raw إلى OpenRouter
+- [x] لا طلبات خارجية قبل ضبط Secret server-side ووجود Playlist اختبارية عامة
+- [x] بعد التقرير يتوقف العمل
